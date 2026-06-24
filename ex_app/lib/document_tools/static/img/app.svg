@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" role="img" aria-label="Nextcloud Document Tools">
+  <rect width="32" height="32" rx="6" fill="#0082c9"/>
+  <path fill="#fff" d="M9 5h10l5 5v17H9z"/>
+  <path fill="#d8eefb" d="M19 5v6h5z"/>
+  <path fill="#0082c9" d="M12 15h9v2h-9zm0 4h9v2h-9zm0 4h6v2h-6z"/>
+</svg>

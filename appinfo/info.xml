@@ -1,0 +1,68 @@
+<?xml version="1.0"?>
+<info>
+	<id>document_tools</id>
+	<name>Nextcloud Document Tools</name>
+	<summary>Document conversion and OCR tools for Nextcloud</summary>
+	<description>
+	<![CDATA[Convert documents and images, extract text, and create searchable PDFs with a Python-based ExApp backend.]]>
+	</description>
+	<version>0.1.0</version>
+	<licence>AGPL</licence>
+	<author>Nextcloud Document Tools contributors</author>
+	<namespace>DocumentTools</namespace>
+	<category>tools</category>
+	<website>https://github.com/example/nextcloud-document-tools</website>
+	<bugs>https://github.com/example/nextcloud-document-tools/issues</bugs>
+	<repository type="git">https://github.com/example/nextcloud-document-tools</repository>
+	<dependencies>
+		<nextcloud min-version="32" max-version="35"/>
+	</dependencies>
+	<external-app>
+		<docker-install>
+			<registry>ghcr.io</registry>
+			<image>example/nextcloud-document-tools</image>
+			<image-tag>latest</image-tag>
+		</docker-install>
+		<environment-variables>
+			<variable>
+				<name>DOCUMENT_TOOLS_OCR_LANG</name>
+				<display-name>OCR language</display-name>
+				<description>PaddleOCR language code, for example ru or en.</description>
+				<default>ru</default>
+			</variable>
+			<variable>
+				<name>DOCUMENT_TOOLS_MAX_WORKERS</name>
+				<display-name>Background workers</display-name>
+				<description>Maximum number of concurrent conversion jobs.</description>
+				<default>1</default>
+			</variable>
+		</environment-variables>
+		<routes>
+			<route>
+				<url>^/api/.*</url>
+				<verb>GET,POST,DELETE</verb>
+				<access_level>USER</access_level>
+				<headers_to_exclude>[]</headers_to_exclude>
+				<bruteforce_protection>[401, 500]</bruteforce_protection>
+			</route>
+			<route>
+				<url>^/js/.*</url>
+				<verb>GET</verb>
+				<access_level>USER</access_level>
+				<headers_to_exclude>[]</headers_to_exclude>
+			</route>
+			<route>
+				<url>^/css/.*</url>
+				<verb>GET</verb>
+				<access_level>USER</access_level>
+				<headers_to_exclude>[]</headers_to_exclude>
+			</route>
+			<route>
+				<url>^/img/.*</url>
+				<verb>GET</verb>
+				<access_level>USER</access_level>
+				<headers_to_exclude>[]</headers_to_exclude>
+			</route>
+		</routes>
+	</external-app>
+</info>
