@@ -9,7 +9,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Annotated
 
-from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import Depends, FastAPI, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from nc_py_api import NextcloudApp
@@ -17,7 +17,7 @@ from nc_py_api.ex_app import AppAPIAuthMiddleware, LogLvl, nc_app, run_app, set_
 
 from document_tools import APP_ID, APP_NAME
 from document_tools.converter import ConversionError, convert_document
-from document_tools.models import FileActionPayload, Job, JobStatus, OutputFormat, SaveRequest
+from document_tools.models import FileActionPayload, Job, JobStatus, NextcloudJobRequest, OutputFormat, SaveRequest
 from document_tools.storage import job_dir, safe_upload_name, unique_path
 
 STATIC_ROOT = Path(__file__).parent / "document_tools" / "static"
@@ -121,10 +121,82 @@ async def create_job(
     return job
 
 
+@APP.post("/api/jobs/upload", status_code=202)
+async def create_upload_job(
+    request: Request,
+    output_format: Annotated[OutputFormat, Query()],
+    filename: Annotated[str, Query(min_length=1)],
+) -> Job:
+    job = _create_job(filename, output_format, "upload")
+    directory = job_dir(job.id)
+    input_path = unique_path(directory, filename)
+    total_size = 0
+    with input_path.open("wb") as target:
+        async for chunk in request.stream():
+            if chunk:
+                total_size += len(chunk)
+                target.write(chunk)
+    if total_size <= 0:
+        raise HTTPException(status_code=400, detail="Uploaded file is empty")
+    job.input_path = str(input_path)
+    job.metadata["size"] = total_size
+    _store_job(job)
+    executor.submit(_process_job, job.id)
+    return job
+
+
+@APP.post("/api/jobs/from-nextcloud", status_code=202)
+async def create_nextcloud_job(
+    payload: NextcloudJobRequest,
+    nc: Annotated[NextcloudApp, Depends(nc_app)],
+) -> Job:
+    node = nc.files.by_id(payload.file_id)
+    if node is None:
+        raise HTTPException(status_code=404, detail="Nextcloud file not found")
+    if node.is_dir:
+        raise HTTPException(status_code=400, detail="Select a file, not a folder")
+
+    job = _create_job(node.name, payload.output_format, "nextcloud")
+    directory = job_dir(job.id)
+    input_path = unique_path(directory, node.name)
+    with input_path.open("wb") as target:
+        nc.files.download2stream(node, target)
+    job.input_path = str(input_path)
+    job.metadata["nextcloud_file"] = _node_to_dict(node)
+    _store_job(job)
+    executor.submit(_process_job, job.id)
+    return job
+
+
 @APP.post("/api/file-action")
 async def file_action(payload: FileActionPayload) -> JSONResponse:
     _ = payload
     return JSONResponse(content={"redirect_handler": "main"})
+
+
+@APP.get("/api/nextcloud/files")
+async def list_nextcloud_files(
+    nc: Annotated[NextcloudApp, Depends(nc_app)],
+    path: str = "",
+) -> dict[str, object]:
+    try:
+        nodes = nc.files.listdir(path, depth=1, exclude_self=True)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Cannot list Nextcloud folder: {exc}") from exc
+    items = [_node_to_dict(node) for node in nodes]
+    items.sort(key=lambda item: (not item["is_dir"], str(item["name"]).lower()))
+    return {"path": path.strip("/"), "items": items}
+
+
+@APP.get("/api/nextcloud/files/by-id/{file_id}")
+async def get_nextcloud_file(
+    file_id: int,
+    nc: Annotated[NextcloudApp, Depends(nc_app)],
+) -> dict[str, object]:
+    node = nc.files.by_id(file_id)
+    if node is None:
+        raise HTTPException(status_code=404, detail="Nextcloud file not found")
+    return _node_to_dict(node)
 
 
 @APP.get("/api/jobs")
@@ -184,6 +256,19 @@ def _create_job(filename: str, output_format: OutputFormat, source: str) -> Job:
         operation=operation,
         input_path=str(input_path),
     )
+
+
+def _node_to_dict(node) -> dict[str, object]:
+    return {
+        "file_id": node.info.fileid,
+        "fileId": node.info.fileid,
+        "name": node.name,
+        "path": node.user_path.rstrip("/"),
+        "is_dir": node.is_dir,
+        "mimetype": node.info.mimetype,
+        "size": node.info.size,
+        "permissions": node.info.permissions,
+    }
 
 
 def _store_job(job: Job) -> None:

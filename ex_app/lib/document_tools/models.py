@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class OutputFormat(str, Enum):
@@ -61,6 +61,13 @@ class Job(BaseModel):
 
 class FileActionPayload(BaseModel):
     files: list[dict[str, Any]] | None = None
+
+
+class NextcloudJobRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    file_id: int = Field(alias="fileId")
+    output_format: OutputFormat
 
 
 class SaveRequest(BaseModel):
