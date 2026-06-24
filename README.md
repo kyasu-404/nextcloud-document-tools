@@ -41,7 +41,7 @@ References:
 Update the image name in `appinfo/info.xml` before publishing, then build:
 
 ```bash
-docker build -t ghcr.io/example/nextcloud-document-tools:latest .
+docker build -t ghcr.io/kyasu-404/nextcloud-document-tools:1.0.0 .
 ```
 
 The image intentionally contains LibreOffice, PaddleOCR, PyMuPDF, Pandoc, Calibre, and WeasyPrint dependencies. It will be large.

@@ -1,6 +1,6 @@
 APP_ID := document_tools
-IMAGE ?= ghcr.io/example/nextcloud-document-tools
-TAG ?= latest
+IMAGE ?= ghcr.io/kyasu-404/nextcloud-document-tools
+TAG ?= 1.0.0
 
 .PHONY: help build run-local
 

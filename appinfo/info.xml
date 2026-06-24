@@ -6,22 +6,22 @@
 	<description>
 	<![CDATA[Convert documents and images, extract text, and create searchable PDFs with a Python-based ExApp backend.]]>
 	</description>
-	<version>0.1.0</version>
+	<version>1.0.0</version>
 	<licence>AGPL</licence>
 	<author>Nextcloud Document Tools contributors</author>
 	<namespace>DocumentTools</namespace>
 	<category>tools</category>
-	<website>https://github.com/example/nextcloud-document-tools</website>
-	<bugs>https://github.com/example/nextcloud-document-tools/issues</bugs>
-	<repository type="git">https://github.com/example/nextcloud-document-tools</repository>
+	<website>https://github.com/kyasu-404/nextcloud-document-tools</website>
+	<bugs>https://github.com/kyasu-404/nextcloud-document-tools/issues</bugs>
+	<repository type="git">https://github.com/kyasu-404/nextcloud-document-tools</repository>
 	<dependencies>
 		<nextcloud min-version="32" max-version="35"/>
 	</dependencies>
 	<external-app>
 		<docker-install>
 			<registry>ghcr.io</registry>
-			<image>example/nextcloud-document-tools</image>
-			<image-tag>latest</image-tag>
+			<image>kyasu-404/nextcloud-document-tools</image>
+			<image-tag>1.0.0</image-tag>
 		</docker-install>
 		<environment-variables>
 			<variable>
