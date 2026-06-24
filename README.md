@@ -44,6 +44,14 @@ Update the image name in `appinfo/info.xml` before publishing, then build:
 docker build -t ghcr.io/kyasu-404/nextcloud-document-tools:1.0.0 .
 ```
 
+Sanity-check the HaRP entrypoint before pushing:
+
+```bash
+docker run --rm --entrypoint /bin/sh \
+  ghcr.io/kyasu-404/nextcloud-document-tools:1.0.0 \
+  -c 'ls -l /start.sh /usr/local/bin/frpc /app/ex_app/lib/main.py'
+```
+
 Push the image before registering the ExApp through AppAPI:
 
 ```bash

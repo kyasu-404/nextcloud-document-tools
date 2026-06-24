@@ -28,8 +28,8 @@ RUN apt-get update \
 
 # HaRP compatibility: start.sh launches FRP client when AppAPI provides HaRP
 # variables, then execs the application command below.
-RUN curl -fsSL https://raw.githubusercontent.com/nextcloud/HaRP/main/exapps_dev/start.sh -o /start.sh \
-    && chmod +x /start.sh \
+COPY docker/start.sh /start.sh
+RUN chmod +x /start.sh \
     && set -ex; \
         ARCH="$(uname -m)"; \
         if [ "$ARCH" = "aarch64" ]; then \
