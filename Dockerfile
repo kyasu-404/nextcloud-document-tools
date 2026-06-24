@@ -1,3 +1,5 @@
+FROM ghcr.io/nextcloud/nextcloud-appapi-harp:release AS harp
+
 FROM python:3.11-slim-bookworm
 
 ENV PYTHONUNBUFFERED=1 \
@@ -33,22 +35,11 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 # HaRP compatibility: start.sh launches FRP client when AppAPI provides HaRP
-# variables, then execs the application command below.
+# variables, then execs the application command below. Copy frpc from the
+# official HaRP image instead of downloading it during build.
 COPY docker/start.sh /start.sh
-RUN chmod +x /start.sh \
-    && set -ex; \
-        ARCH="$(uname -m)"; \
-        if [ "$ARCH" = "aarch64" ]; then \
-            FRP_URL="https://raw.githubusercontent.com/nextcloud/HaRP/main/exapps_dev/frp_0.61.1_linux_arm64.tar.gz"; \
-        else \
-            FRP_URL="https://raw.githubusercontent.com/nextcloud/HaRP/main/exapps_dev/frp_0.61.1_linux_amd64.tar.gz"; \
-        fi; \
-        curl -fsSL "$FRP_URL" -o /tmp/frp.tar.gz; \
-        tar -C /tmp -xzf /tmp/frp.tar.gz; \
-        mv /tmp/frp_0.61.1_linux_* /tmp/frp; \
-        cp /tmp/frp/frpc /usr/local/bin/frpc; \
-        chmod +x /usr/local/bin/frpc; \
-        rm -rf /tmp/frp /tmp/frp.tar.gz
+COPY --from=harp /usr/bin/frpc /usr/local/bin/frpc
+RUN chmod +x /start.sh /usr/local/bin/frpc
 
 COPY requirements.txt /app/requirements.txt
 RUN pip install --no-cache-dir --upgrade pip \
