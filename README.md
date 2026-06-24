@@ -6,15 +6,15 @@ Python ExApp for Nextcloud AppAPI that provides document conversion and OCR tool
 
 - PDF -> DOCX with `pdf2docx`
 - DOCX -> PDF with LibreOffice headless
-- PDF -> searchable PDF with OCRmyPDF and Tesseract, with PaddleOCR/PyMuPDF fallback
+- PDF -> searchable PDF with PaddleOCR and PyMuPDF, with OCRmyPDF/Tesseract fallback
 - PDF -> TXT with PyMuPDF, with OCR fallback for scanned PDFs
 - DOCX -> Markdown with Mammoth, with Pandoc fallback
 - HTML -> PDF with WeasyPrint, with LibreOffice fallback
 - EPUB -> PDF with Calibre `ebook-convert`, with Pandoc fallback
-- Image OCR to TXT or searchable PDF with Tesseract, with PaddleOCR fallback
+- Image OCR to TXT or searchable PDF with PaddleOCR, with Tesseract fallback
 - Top menu page in Nextcloud
 - Files context menu action: `Конвертировать документ`
-- In-memory processing queue with downloadable results
+- In-memory processing queue with downloadable results and save-back to Nextcloud Files
 
 ## AppAPI and HaRP notes
 
@@ -63,7 +63,11 @@ If the GHCR package is private, either make it public or make sure the Docker
 daemon used by HaRP can pull it. A failed pull is surfaced by AppAPI as an
 `images/create` error from the HaRP Docker proxy.
 
-The image intentionally contains LibreOffice, OCRmyPDF, Tesseract, PaddleOCR, PyMuPDF, Pandoc, Calibre, and WeasyPrint dependencies. It will be large.
+The image intentionally contains LibreOffice, PaddleOCR, PyMuPDF, OCRmyPDF, Tesseract, Pandoc, Calibre, and WeasyPrint dependencies. It will be large.
+
+PaddleOCR downloads language models on first OCR use into `/root/.paddleocr`.
+The running ExApp container reuses that cache, but fully offline deployments should
+preload the required `en`/`ru` models during image build.
 
 If AppAPI reports `container startup failed`, check the ExApp container status:
 
@@ -154,14 +158,17 @@ DOCUMENT_TOOLS_DISABLE_APPAPI_AUTH=1 python main.py
 
 Then open `http://127.0.0.1:23000/js/document_tools-main.js` only to verify static serving. The real UI is mounted by Nextcloud AppAPI as a top menu embedded page.
 
-## Current limitation
+## Save-back behavior
 
-`Download` works for completed jobs. `Save back to Nextcloud`, `Replace original file`, and `Save to folder` are present in the UI and API surface, but return `501` until tested against a live Nextcloud AppAPI/WebDAV context. This is deliberate: writing into user files should be finished against a real server to verify permissions, shares, conflict handling, and path resolution.
+Completed jobs can be downloaded or saved back into Nextcloud Files:
+
+- `Save back to Nextcloud` stores the result next to the original Nextcloud file, or in the Files root for local uploads.
+- `Save to folder` opens the Nextcloud folder picker and stores the result in the selected folder.
+- `Replace original file` is limited to compatible replacements, for example PDF -> searchable PDF, so a DOCX is not silently replaced with PDF bytes under a `.docx` name.
 
 ## Suggested next improvements
 
 - Persist job state as JSON in `APP_PERSISTENT_STORAGE`.
-- Add authenticated WebDAV save-back support using `nc_py_api` once a test Nextcloud is available.
 - Add per-user queue isolation if several users run conversions concurrently.
 - Add GPU Docker tags for PaddleOCR (`:cuda` / `:rocm`) if the HaRP daemon exposes a compute device.
 - Add file size and runtime limits in settings to protect the ExApp host.

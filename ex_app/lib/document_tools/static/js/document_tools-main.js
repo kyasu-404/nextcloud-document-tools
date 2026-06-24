@@ -156,7 +156,7 @@
 
 		root.querySelector('[data-action="save-back"]').addEventListener('click', () => saveResult(root, 'save_back'))
 		root.querySelector('[data-action="replace"]').addEventListener('click', () => saveResult(root, 'replace_original'))
-		root.querySelector('[data-action="save-folder"]').addEventListener('click', () => saveResult(root, 'save_to_folder'))
+		root.querySelector('[data-action="save-folder"]').addEventListener('click', () => openFolderPicker(root))
 	}
 
 	async function loadInitialContextFile(root) {
@@ -301,9 +301,10 @@
 				return
 			}
 			diagnosticsState = await response.json()
+			const imports = diagnosticsState.imports || {}
 			const langs = diagnosticsState.tesseract_languages || []
-			if (langs.length && !langs.includes('rus')) {
-				notify(root, 'Русский язык OCR не найден в контейнере. Пересоберите образ с tesseract-ocr-rus.', 'error')
+			if (!imports.paddleocr?.ok && langs.length && !langs.includes('rus')) {
+				notify(root, 'PaddleOCR недоступен, а русский язык Tesseract не найден в контейнере.', 'error')
 			}
 			updateAvailableFormats(root)
 		} catch (_error) {
@@ -386,28 +387,51 @@
 		return stages[stage] || stage
 	}
 
-	async function saveResult(root, mode) {
+	async function saveResult(root, mode, folder) {
 		if (!latestDoneJob) {
 			return
 		}
 		const response = await fetch(apiUrl(`/api/jobs/${latestDoneJob.id}/save`), {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
-			body: JSON.stringify({ mode }),
+			body: JSON.stringify({ mode, folder }),
 		})
 		if (!response.ok) {
 			const data = await response.json().catch(() => ({}))
 			notify(root, data.detail || 'Сохранение в Nextcloud пока недоступно.', 'error')
+			return
 		}
+		const data = await response.json().catch(() => ({}))
+		const path = data.file?.path || data.file?.name || 'Files'
+		notify(root, `Сохранено в Nextcloud: ${path}`, 'success')
 	}
 
-	function openCloudPicker(root) {
+	function openFolderPicker(root) {
+		if (!latestDoneJob) {
+			notify(root, 'Сначала дождитесь готового результата.', 'error')
+			return
+		}
+		openCloudPicker(root, {
+			mode: 'folder',
+			title: 'Выберите папку для результата',
+			chooseLabel: 'Сохранить сюда',
+			emptyText: 'В этой папке нет вложенных папок.',
+			onChoose: (folderPath) => saveResult(root, 'save_to_folder', folderPath),
+		})
+	}
+
+	function openCloudPicker(root, options = {}) {
+		const mode = options.mode || 'file'
+		const folderMode = mode === 'folder'
+		const title = options.title || 'Выберите файл из Nextcloud'
+		const chooseLabel = options.chooseLabel || 'Выбрать'
+		const initialSelection = folderMode ? 'Папка: Файлы' : 'Файл не выбран'
 		const host = root.querySelector('[data-modal-host]')
 		host.innerHTML = `
 			<div class="dt-modal-backdrop" data-modal-close></div>
 			<section class="dt-modal" role="dialog" aria-modal="true" aria-labelledby="dt-picker-title">
 				<header class="dt-modal-header">
-					<h2 id="dt-picker-title">Выберите файл из Nextcloud</h2>
+					<h2 id="dt-picker-title">${escapeHtml(title)}</h2>
 					<button class="dt-icon-button" type="button" data-modal-close aria-label="Закрыть">×</button>
 				</header>
 				<div class="dt-picker-toolbar">
@@ -418,10 +442,10 @@
 					<p class="dt-empty">Загрузка файлов...</p>
 				</div>
 				<footer class="dt-modal-footer">
-					<span class="dt-picker-selection" data-picker-selection>Файл не выбран</span>
+					<span class="dt-picker-selection" data-picker-selection>${escapeHtml(initialSelection)}</span>
 					<div class="dt-output-actions">
 						<button class="dt-button" type="button" data-modal-close>Отмена</button>
-						<button class="dt-button primary" type="button" data-picker-choose disabled>Выбрать</button>
+						<button class="dt-button primary" type="button" data-picker-choose ${folderMode ? '' : 'disabled'}>${escapeHtml(chooseLabel)}</button>
 					</div>
 				</footer>
 			</section>
@@ -429,14 +453,16 @@
 		host.querySelectorAll('[data-modal-close]').forEach((button) => {
 			button.addEventListener('click', () => closeCloudPicker(root))
 		})
-		loadCloudFolder(root, '')
+		loadCloudFolder(root, '', { ...options, mode })
 	}
 
 	function closeCloudPicker(root) {
 		root.querySelector('[data-modal-host]').innerHTML = ''
 	}
 
-	async function loadCloudFolder(root, path) {
+	async function loadCloudFolder(root, path, options = {}) {
+		const mode = options.mode || 'file'
+		const folderMode = mode === 'folder'
 		const host = root.querySelector('[data-modal-host]')
 		const list = host.querySelector('[data-picker-list]')
 		const up = host.querySelector('[data-picker-up]')
@@ -445,10 +471,16 @@
 		let selectedFile = null
 
 		list.innerHTML = '<p class="dt-empty">Загрузка файлов...</p>'
-		choose.disabled = true
-		selection.textContent = 'Файл не выбран'
+		choose.disabled = !folderMode
+		selection.textContent = folderMode ? `Папка: ${path || 'Файлы'}` : 'Файл не выбран'
 		up.disabled = !path
-		up.onclick = () => loadCloudFolder(root, parentPath(path))
+		up.onclick = () => loadCloudFolder(root, parentPath(path), options)
+		if (folderMode) {
+			choose.onclick = () => {
+				closeCloudPicker(root)
+				options.onChoose?.(path || '')
+			}
+		}
 
 		try {
 			const params = new URLSearchParams({ path })
@@ -457,18 +489,21 @@
 				throw new Error(await errorMessage(response))
 			}
 			const data = await response.json()
-			renderBreadcrumbs(root, data.path || '')
-			const items = data.items || []
+			renderBreadcrumbs(root, data.path || '', options)
+			const items = folderMode ? (data.items || []).filter((item) => item.is_dir) : (data.items || [])
 			if (!items.length) {
-				list.innerHTML = '<p class="dt-empty">В этой папке нет файлов.</p>'
+				list.innerHTML = `<p class="dt-empty">${escapeHtml(options.emptyText || 'В этой папке нет файлов.')}</p>`
 				return
 			}
-			list.innerHTML = items.map(pickerRow).join('')
+			list.innerHTML = items.map((item, index) => pickerRow(item, index, mode)).join('')
 			list.querySelectorAll('[data-picker-row]').forEach((row) => {
 				row.addEventListener('click', () => {
 					const item = items[Number(row.dataset.index)]
 					if (item.is_dir) {
-						loadCloudFolder(root, item.path)
+						loadCloudFolder(root, item.path, options)
+						return
+					}
+					if (folderMode) {
 						return
 					}
 					selectedFile = item
@@ -478,19 +513,21 @@
 					choose.disabled = false
 				})
 			})
-			choose.onclick = () => {
-				if (!selectedFile) {
-					return
+			if (!folderMode) {
+				choose.onclick = () => {
+					if (!selectedFile) {
+						return
+					}
+					selectCloudFile(root, selectedFile)
+					closeCloudPicker(root)
 				}
-				selectCloudFile(root, selectedFile)
-				closeCloudPicker(root)
 			}
 		} catch (error) {
 			list.innerHTML = `<p class="dt-empty">${escapeHtml(error.message || 'Не удалось открыть папку.')}</p>`
 		}
 	}
 
-	function renderBreadcrumbs(root, path) {
+	function renderBreadcrumbs(root, path, options = {}) {
 		const host = root.querySelector('[data-modal-host]')
 		const breadcrumbs = host.querySelector('[data-picker-breadcrumbs]')
 		const parts = path.split('/').filter(Boolean)
@@ -501,13 +538,13 @@
 		})
 		breadcrumbs.innerHTML = buttons.join('<span>/</span>')
 		breadcrumbs.querySelectorAll('button').forEach((button) => {
-			button.addEventListener('click', () => loadCloudFolder(root, button.dataset.path || ''))
+			button.addEventListener('click', () => loadCloudFolder(root, button.dataset.path || '', options))
 		})
 	}
 
-	function pickerRow(item, index) {
+	function pickerRow(item, index, mode) {
 		const icon = item.is_dir ? '📁' : '📄'
-		const meta = item.is_dir ? 'Папка' : `${formatBytes(item.size)} · ${item.mimetype || 'файл'}`
+		const meta = item.is_dir ? (mode === 'folder' ? 'Открыть папку' : 'Папка') : `${formatBytes(item.size)} · ${item.mimetype || 'файл'}`
 		return `
 			<button class="dt-picker-row" type="button" data-picker-row data-index="${index}">
 				<span class="dt-picker-icon">${icon}</span>
@@ -581,10 +618,16 @@
 		const commands = diagnosticsState.commands || {}
 		const imports = diagnosticsState.imports || {}
 		if (format === 'searchable_pdf' && info.isPdf) {
-			return Boolean(commands.ocrmypdf || imports.paddleocr?.ok)
+			return Boolean(imports.paddleocr?.ok || commands.ocrmypdf)
 		}
 		if (format === 'searchable_pdf' && info.isImage) {
-			return Boolean(commands.tesseract || imports.paddleocr?.ok)
+			return Boolean(imports.paddleocr?.ok || commands.tesseract)
+		}
+		if (format === 'txt' && info.isImage) {
+			return Boolean(imports.paddleocr?.ok || commands.tesseract)
+		}
+		if (format === 'txt' && info.isPdf) {
+			return Boolean(imports.fitz?.ok || imports.paddleocr?.ok || commands.tesseract)
 		}
 		if (format === 'docx' && info.isPdf) {
 			return Boolean(imports.pdf2docx?.ok)

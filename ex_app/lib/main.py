@@ -8,6 +8,7 @@ from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Annotated
+from uuid import uuid4
 
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse
@@ -17,7 +18,15 @@ from nc_py_api.ex_app import AppAPIAuthMiddleware, LogLvl, nc_app, run_app, set_
 
 from document_tools import APP_ID, APP_NAME
 from document_tools.converter import ConversionError, analyze_file, convert_document, diagnostics
-from document_tools.models import FileActionPayload, Job, JobStatus, NextcloudJobRequest, OutputFormat, SaveRequest
+from document_tools.models import (
+    FileActionPayload,
+    Job,
+    JobStatus,
+    NextcloudJobRequest,
+    OutputFormat,
+    SaveMode,
+    SaveRequest,
+)
 from document_tools.storage import job_dir, safe_upload_name, unique_path
 
 STATIC_ROOT = Path(__file__).parent / "document_tools" / "static"
@@ -257,14 +266,19 @@ async def save_job(
     if not job.output_file or not job.output_file.exists():
         raise HTTPException(status_code=404, detail="Result file is missing")
 
-    nc.log(LogLvl.WARNING, f"Save mode requested but not wired yet: {request.mode}")
-    raise HTTPException(
-        status_code=501,
-        detail=(
-            "Saving back to Nextcloud requires live AppAPI/WebDAV integration. "
-            "The endpoint is reserved and currently returns downloadable results."
-        ),
-    )
+    try:
+        target_path = _resolve_save_target(nc, job, request)
+        with job.output_file.open("rb") as source:
+            node = nc.files.upload_stream(target_path, source)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Не удалось сохранить результат в Nextcloud: {exc}") from exc
+
+    saved = _node_to_dict(node) if node is not None else {"path": target_path, "name": target_path.rsplit("/", 1)[-1]}
+    job.metadata["last_saved_to_nextcloud"] = saved
+    _store_job(job)
+    return JSONResponse(content={"status": "ok", "file": saved})
 
 
 def _create_job(filename: str, output_format: OutputFormat, source: str) -> Job:
@@ -281,16 +295,94 @@ def _create_job(filename: str, output_format: OutputFormat, source: str) -> Job:
 
 
 def _node_to_dict(node) -> dict[str, object]:
+    info = getattr(node, "info", None)
     return {
-        "file_id": node.info.fileid,
-        "fileId": node.info.fileid,
-        "name": node.name,
-        "path": node.user_path.rstrip("/"),
+        "file_id": getattr(info, "fileid", None),
+        "fileId": getattr(info, "fileid", None),
+        "name": getattr(node, "name", ""),
+        "path": getattr(node, "user_path", "").rstrip("/"),
         "is_dir": node.is_dir,
-        "mimetype": node.info.mimetype,
-        "size": node.info.size,
-        "permissions": node.info.permissions,
+        "mimetype": getattr(info, "mimetype", ""),
+        "size": getattr(info, "size", 0),
+        "permissions": getattr(info, "permissions", ""),
     }
+
+
+def _resolve_save_target(nc: NextcloudApp, job: Job, request: SaveRequest) -> str:
+    fallback_name = job.output_file.name if job.output_file else "result"
+    output_name = safe_upload_name(job.output_filename or fallback_name)
+    original = job.metadata.get("nextcloud_file") if isinstance(job.metadata, dict) else None
+    original_path = _normalize_remote_path(original.get("path")) if isinstance(original, dict) else ""
+
+    if request.mode == SaveMode.REPLACE_ORIGINAL:
+        if not original_path:
+            raise HTTPException(status_code=400, detail="Заменить оригинал можно только для файла, выбранного из Nextcloud.")
+        if not _can_replace_original(original_path, output_name, job.output_format):
+            raise HTTPException(
+                status_code=400,
+                detail="Формат результата отличается от оригинала. Используйте «Сохранить в Nextcloud» или «Сохранить в папку».",
+            )
+        return original_path
+
+    if request.mode == SaveMode.SAVE_TO_FOLDER:
+        folder = _normalize_remote_path(request.folder)
+        _ensure_folder_can_receive(nc, folder)
+        return _unique_remote_path(nc, folder, output_name)
+
+    if request.mode == SaveMode.SAVE_BACK:
+        folder = _remote_parent(original_path) if original_path else ""
+        _ensure_folder_can_receive(nc, folder)
+        return _unique_remote_path(nc, folder, output_name)
+
+    raise HTTPException(status_code=400, detail="Неизвестный режим сохранения результата.")
+
+
+def _normalize_remote_path(path: str | None) -> str:
+    return str(path or "").replace("\\", "/").strip("/")
+
+
+def _remote_parent(path: str) -> str:
+    normalized = _normalize_remote_path(path)
+    if "/" not in normalized:
+        return ""
+    return normalized.rsplit("/", 1)[0]
+
+
+def _remote_join(folder: str, filename: str) -> str:
+    folder = _normalize_remote_path(folder)
+    filename = safe_upload_name(filename)
+    return f"{folder}/{filename}" if folder else filename
+
+
+def _unique_remote_path(nc: NextcloudApp, folder: str, filename: str) -> str:
+    filename = safe_upload_name(filename)
+    stem = Path(filename).stem
+    suffix = Path(filename).suffix
+    for index in range(0, 1000):
+        candidate_name = filename if index == 0 else f"{stem}-{index}{suffix}"
+        candidate = _remote_join(folder, candidate_name)
+        if nc.files.by_path(candidate) is None:
+            return candidate
+    return _remote_join(folder, f"{stem}-{uuid4().hex}{suffix}")
+
+
+def _ensure_folder_can_receive(nc: NextcloudApp, folder: str) -> None:
+    folder = _normalize_remote_path(folder)
+    if not folder:
+        return
+    node = nc.files.by_path(folder)
+    if node is None or not node.is_dir:
+        raise HTTPException(status_code=404, detail="Папка Nextcloud не найдена.")
+    if hasattr(node, "is_creatable") and not node.is_creatable:
+        raise HTTPException(status_code=403, detail="В эту папку нельзя сохранять файлы.")
+
+
+def _can_replace_original(original_path: str, output_name: str, output_format: OutputFormat) -> bool:
+    original_suffix = Path(original_path).suffix.lower()
+    output_suffix = Path(output_name).suffix.lower()
+    if output_format == OutputFormat.SEARCHABLE_PDF and original_suffix == ".pdf":
+        return True
+    return bool(original_suffix and original_suffix == output_suffix)
 
 
 def _store_job(job: Job) -> None:

@@ -40,9 +40,9 @@
 
 #document-tools-root .dt-shell {
 	display: grid;
-	grid-template-columns: minmax(0, 1fr) minmax(300px, 380px);
-	gap: 20px;
-	width: min(1440px, calc(100vw - 48px));
+	grid-template-columns: minmax(0, 1fr) minmax(420px, 520px);
+	gap: 24px;
+	width: min(1700px, calc(100vw - 48px));
 	margin: 0 auto;
 	padding: 24px;
 }
@@ -263,6 +263,7 @@
 	align-self: start;
 	position: sticky;
 	top: 18px;
+	min-width: 0;
 }
 
 #document-tools-root .dt-panel-title {
@@ -284,20 +285,27 @@
 	padding: 12px;
 	background: #fff;
 	color: var(--dt-ink);
+	min-width: 0;
+	overflow: hidden;
 }
 
 #document-tools-root .dt-job-top {
 	display: flex;
 	justify-content: space-between;
+	align-items: flex-start;
 	gap: 10px;
 	font-weight: 650;
+	min-width: 0;
 }
 
 #document-tools-root .dt-job-file {
+	min-width: 0;
+	line-height: 1.35;
 	overflow-wrap: anywhere;
 }
 
 #document-tools-root .dt-job-status {
+	flex: 0 0 auto;
 	color: var(--dt-muted);
 	white-space: nowrap;
 }
@@ -324,6 +332,7 @@
 	margin: 8px 0 0;
 	color: var(--dt-muted);
 	font-size: 13px;
+	overflow-wrap: anywhere;
 }
 
 #document-tools-root .dt-result {
@@ -340,6 +349,7 @@
 #document-tools-root .dt-empty {
 	margin: 0;
 	color: var(--dt-muted);
+	overflow-wrap: anywhere;
 }
 
 #document-tools-root .dt-toast {
@@ -499,7 +509,7 @@
 	text-align: center;
 }
 
-@media (max-width: 900px) {
+@media (max-width: 1100px) {
 	#document-tools-root {
 		width: 100%;
 	}

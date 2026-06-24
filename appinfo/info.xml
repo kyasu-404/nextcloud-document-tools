@@ -27,7 +27,7 @@
 			<variable>
 				<name>DOCUMENT_TOOLS_OCR_LANG</name>
 				<display-name>OCR language</display-name>
-				<description>OCR language code for Tesseract/OCRmyPDF, for example rus+eng.</description>
+				<description>OCR language code. PaddleOCR uses ru/en; Tesseract fallback uses values like rus+eng.</description>
 				<default>rus+eng</default>
 			</variable>
 			<variable>

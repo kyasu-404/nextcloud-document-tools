@@ -20,6 +20,12 @@ RUN apt-get update \
         fonts-noto-cjk \
         fonts-noto-color-emoji \
         musl \
+        libgomp1 \
+        libgl1 \
+        libglib2.0-0 \
+        libsm6 \
+        libxext6 \
+        libxrender1 \
         libreoffice \
         libreoffice-writer \
         pandoc \

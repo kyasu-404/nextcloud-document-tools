@@ -65,7 +65,7 @@ def validate_conversion(input_path: Path, output_format: OutputFormat) -> None:
 
 def diagnostics() -> dict[str, object]:
     imports = {}
-    for module in ("fitz", "pdf2docx", "mammoth", "weasyprint", "paddleocr"):
+    for module in ("fitz", "pdf2docx", "mammoth", "weasyprint", "paddle", "paddleocr"):
         try:
             imported = __import__(module)
             imports[module] = {"ok": True, "version": getattr(imported, "__version__", "")}
@@ -240,6 +240,12 @@ def to_searchable_pdf(input_path: Path, output_dir: Path, ocr_lang: str) -> Path
         input_path = to_pdf(input_path, output_dir, ocr_lang)
 
     output = output_dir / f"{input_path.stem}.searchable.pdf"
+    paddle_error: ConversionError | None = None
+    try:
+        return paddle_searchable_pdf(input_path, output, ocr_lang)
+    except ConversionError as exc:
+        paddle_error = exc
+
     if shutil.which("ocrmypdf"):
         run(
             [
@@ -258,34 +264,62 @@ def to_searchable_pdf(input_path: Path, output_dir: Path, ocr_lang: str) -> Path
         )
         ensure_output(output)
         return output
-    return paddle_searchable_pdf(input_path, output)
+    if paddle_error:
+        raise paddle_error
+    raise ConversionError("В контейнере нет PaddleOCR или OCRmyPDF для создания PDF с OCR.")
 
 
 def image_to_pdf(input_path: Path, output: Path, ocr_lang: str, *, searchable: bool) -> Path:
-    if searchable and shutil.which("tesseract"):
+    if not searchable:
+        return image_to_plain_pdf(input_path, output)
+
+    plain_pdf = output.parent / f"{input_path.stem}.image.pdf"
+    image_to_plain_pdf(input_path, plain_pdf)
+    paddle_error: ConversionError | None = None
+    try:
+        return paddle_searchable_pdf(plain_pdf, output, ocr_lang)
+    except ConversionError as exc:
+        paddle_error = exc
+    finally:
+        plain_pdf.unlink(missing_ok=True)
+
+    if shutil.which("tesseract"):
         base = output.with_suffix("")
         run(["tesseract", str(input_path), str(base), "-l", tesseract_lang(ocr_lang), "pdf"], timeout=900)
         generated = base.with_suffix(".pdf")
+        if not generated.exists():
+            raise ConversionError("Tesseract не создал PDF с OCR.")
         if generated != output:
             generated.replace(output)
         ensure_output(output)
         return output
+    if paddle_error:
+        raise paddle_error
+    raise ConversionError("Для OCR изображений нужен PaddleOCR или Tesseract.")
 
+
+def image_to_plain_pdf(input_path: Path, output: Path) -> Path:
     try:
         import fitz
         from PIL import Image
     except Exception as exc:  # pragma: no cover
         raise ConversionError("Для создания PDF из изображения нужны PyMuPDF и Pillow.") from exc
 
+    normalized = output.parent / f"{input_path.stem}.normalized.png"
     with Image.open(input_path) as image:
-        width, height = image.size
-    doc = fitz.open()
-    page = doc.new_page(width=width, height=height)
-    page.insert_image(page.rect, filename=str(input_path))
-    doc.save(output, garbage=4, deflate=True)
-    doc.close()
-    ensure_output(output)
-    return output
+        prepared = image.convert("RGB")
+        width, height = prepared.size
+        prepared.save(normalized)
+    try:
+        doc = fitz.open()
+        page = doc.new_page(width=width, height=height)
+        page.insert_image(page.rect, filename=str(normalized))
+        doc.save(output, garbage=4, deflate=True)
+        doc.close()
+        ensure_output(output)
+        return output
+    finally:
+        normalized.unlink(missing_ok=True)
 
 
 def pdf_text(input_path: Path) -> str:
@@ -302,11 +336,19 @@ def pdf_text(input_path: Path) -> str:
 
 def ocr_file_to_text(input_path: Path, ocr_lang: str) -> str:
     ext = input_path.suffix.lower()
+    paddle_error: ConversionError | None = None
+    try:
+        return paddle_file_to_text(input_path, ocr_lang)
+    except ConversionError as exc:
+        paddle_error = exc
+
     if shutil.which("tesseract"):
         if ext == ".pdf":
             return ocr_pdf_to_text_with_tesseract(input_path, ocr_lang)
         return tesseract_image_to_text(input_path, ocr_lang)
-    return paddle_file_to_text(input_path, ocr_lang)
+    if paddle_error:
+        raise paddle_error
+    raise ConversionError("Для OCR нужен PaddleOCR или Tesseract.")
 
 
 def ocr_pdf_to_text_with_tesseract(input_path: Path, ocr_lang: str) -> str:
@@ -344,7 +386,7 @@ def paddle_file_to_text(input_path: Path, ocr_lang: str) -> str:
     try:
         import fitz
     except Exception as exc:  # pragma: no cover
-        raise ConversionError("Для OCR нужен Tesseract или PyMuPDF + PaddleOCR.") from exc
+        raise ConversionError("Для OCR через PaddleOCR нужен PyMuPDF.") from exc
 
     ocr = paddle_ocr(ocr_lang)
     chunks: list[str] = []
@@ -353,11 +395,18 @@ def paddle_file_to_text(input_path: Path, ocr_lang: str) -> str:
             for page_index, page in enumerate(doc):
                 pix = page.get_pixmap(matrix=fitz.Matrix(2, 2), alpha=False)
                 image_path = input_path.parent / f"ocr-page-{page_index + 1}.png"
-                pix.save(image_path)
-                chunks.append(paddle_image_to_text(ocr, image_path))
-                image_path.unlink(missing_ok=True)
+                try:
+                    pix.save(image_path)
+                    chunks.append(paddle_image_to_text(ocr, image_path))
+                finally:
+                    image_path.unlink(missing_ok=True)
     else:
-        chunks.append(paddle_image_to_text(ocr, input_path))
+        image_path = normalized_ocr_image(input_path)
+        try:
+            chunks.append(paddle_image_to_text(ocr, image_path))
+        finally:
+            if image_path != input_path:
+                image_path.unlink(missing_ok=True)
     return "\n\n".join(chunk for chunk in chunks if chunk.strip())
 
 
@@ -366,41 +415,41 @@ def paddle_image_to_text(ocr: object, image_path: Path) -> str:
     return "\n".join(lines)
 
 
-def paddle_searchable_pdf(input_path: Path, output: Path) -> Path:
+def paddle_searchable_pdf(input_path: Path, output: Path, ocr_lang: str) -> Path:
     try:
         import fitz
         from PIL import Image
     except Exception as exc:  # pragma: no cover
-        raise ConversionError(
-            "В контейнере нет OCRmyPDF; fallback через PaddleOCR требует PyMuPDF и Pillow."
-        ) from exc
+        raise ConversionError("PaddleOCR для PDF с OCR требует PyMuPDF и Pillow.") from exc
 
-    ocr = paddle_ocr(os.getenv("DOCUMENT_TOOLS_OCR_LANG", "rus+eng"))
+    ocr = paddle_ocr(ocr_lang)
     with fitz.open(input_path) as doc:
         for page_index, page in enumerate(doc):
             pix = page.get_pixmap(matrix=fitz.Matrix(2, 2), alpha=False)
             image_path = output.parent / f"page-{page_index + 1}.png"
-            pix.save(image_path)
-            image = Image.open(image_path)
-            scale_x = page.rect.width / image.width
-            scale_y = page.rect.height / image.height
-            for text, box in iter_ocr_boxes(ocr, image_path):
-                if not text.strip():
-                    continue
-                x0 = min(point[0] for point in box) * scale_x
-                y0 = min(point[1] for point in box) * scale_y
-                x1 = max(point[0] for point in box) * scale_x
-                y1 = max(point[1] for point in box) * scale_y
-                rect = fitz.Rect(x0, y0, x1, y1)
-                page.insert_textbox(
-                    rect,
-                    text,
-                    fontsize=max(4, rect.height * 0.7),
-                    color=(1, 1, 1),
-                    fill_opacity=0,
-                    render_mode=3,
-                )
-            image_path.unlink(missing_ok=True)
+            try:
+                pix.save(image_path)
+                with Image.open(image_path) as image:
+                    scale_x = page.rect.width / image.width
+                    scale_y = page.rect.height / image.height
+                for text, box in iter_ocr_boxes(ocr, image_path):
+                    if not text.strip():
+                        continue
+                    x0 = min(point[0] for point in box) * scale_x
+                    y0 = min(point[1] for point in box) * scale_y
+                    x1 = max(point[0] for point in box) * scale_x
+                    y1 = max(point[1] for point in box) * scale_y
+                    rect = fitz.Rect(x0, y0, x1, y1)
+                    page.insert_textbox(
+                        rect,
+                        text,
+                        fontsize=max(4, rect.height * 0.7),
+                        color=(1, 1, 1),
+                        fill_opacity=0,
+                        render_mode=3,
+                    )
+            finally:
+                image_path.unlink(missing_ok=True)
         doc.save(output, garbage=4, deflate=True)
     ensure_output(output)
     return output
@@ -408,16 +457,48 @@ def paddle_searchable_pdf(input_path: Path, output: Path) -> Path:
 
 def iter_ocr_boxes(ocr: object, image_path: Path):
     result = ocr.ocr(str(image_path), cls=True)
-    pages = result if result and isinstance(result[0], list) else [result]
+    if not result:
+        return
+
+    if _looks_like_ocr_line(result[0]):
+        pages = [result]
+    else:
+        pages = result
+
     for page in pages:
         if not page:
             continue
-        for line in page:
-            if not line or len(line) < 2:
+        lines = page if not _looks_like_ocr_line(page) else [page]
+        for line in lines:
+            if not _looks_like_ocr_line(line):
                 continue
             box, payload = line[0], line[1]
             text = payload[0] if payload else ""
             yield text, box
+
+
+def _looks_like_ocr_line(value: object) -> bool:
+    return (
+        isinstance(value, (list, tuple))
+        and len(value) >= 2
+        and isinstance(value[1], (list, tuple))
+        and len(value[1]) >= 1
+        and isinstance(value[1][0], str)
+    )
+
+
+def normalized_ocr_image(input_path: Path) -> Path:
+    if input_path.suffix.lower() in {".png", ".jpg", ".jpeg"}:
+        return input_path
+    try:
+        from PIL import Image
+    except Exception as exc:  # pragma: no cover
+        raise ConversionError("Для подготовки изображения к OCR нужен Pillow.") from exc
+
+    output = input_path.parent / f"{input_path.stem}.ocr.png"
+    with Image.open(input_path) as image:
+        image.convert("RGB").save(output)
+    return output
 
 
 def paddle_ocr(lang: str) -> object:
