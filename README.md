@@ -49,7 +49,7 @@ Sanity-check the HaRP entrypoint before pushing:
 ```bash
 docker run --rm --entrypoint /bin/sh \
   ghcr.io/kyasu-404/nextcloud-document-tools:1.0.0 \
-  -c 'ls -l /start.sh /usr/local/bin/frpc /app/ex_app/lib/main.py'
+  -c 'ls -l /start.sh /usr/local/bin/frpc /app/ex_app/lib/main.py && /usr/local/bin/frpc --version'
 ```
 
 Push the image before registering the ExApp through AppAPI:

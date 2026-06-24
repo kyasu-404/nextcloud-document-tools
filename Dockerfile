@@ -19,6 +19,7 @@ RUN apt-get update \
         fonts-liberation \
         fonts-noto-cjk \
         fonts-noto-color-emoji \
+        musl \
         libreoffice \
         libreoffice-writer \
         pandoc \
