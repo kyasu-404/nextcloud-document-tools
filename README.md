@@ -44,7 +44,41 @@ Update the image name in `appinfo/info.xml` before publishing, then build:
 docker build -t ghcr.io/kyasu-404/nextcloud-document-tools:1.0.0 .
 ```
 
+Push the image before registering the ExApp through AppAPI:
+
+```bash
+docker push ghcr.io/kyasu-404/nextcloud-document-tools:1.0.0
+docker manifest inspect ghcr.io/kyasu-404/nextcloud-document-tools:1.0.0
+```
+
+If the GHCR package is private, either make it public or make sure the Docker
+daemon used by HaRP can pull it. A failed pull is surfaced by AppAPI as an
+`images/create` error from the HaRP Docker proxy.
+
 The image intentionally contains LibreOffice, PaddleOCR, PyMuPDF, Pandoc, Calibre, and WeasyPrint dependencies. It will be large.
+
+## Register on Nextcloud
+
+Copy `appinfo/info.xml` into the Nextcloud custom app directory and register the
+same app id that is declared in `info.xml`:
+
+```bash
+sudo mkdir -p /opt/nextcloud/html/custom_apps/nextcloud-document-tools/appinfo/
+
+docker cp appinfo/info.xml \
+  nextcloud:/var/www/html/custom_apps/nextcloud-document-tools/appinfo/info.xml
+
+docker exec -u root nextcloud \
+  chown -R www-data:www-data \
+  /var/www/html/custom_apps/nextcloud-document-tools
+
+docker exec -u www-data nextcloud php occ \
+  app_api:app:register \
+  nextcloud-document-tools \
+  harp_proxy_docker \
+  --info-xml=/var/www/html/custom_apps/nextcloud-document-tools/appinfo/info.xml \
+  --wait-finish
+```
 
 ## HaRP deployment sketch
 

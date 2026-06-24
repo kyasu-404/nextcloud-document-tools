@@ -1,6 +1,6 @@
 <?xml version="1.0"?>
 <info>
-	<id>document_tools</id>
+	<id>nextcloud-document-tools</id>
 	<name>Nextcloud Document Tools</name>
 	<summary>Document conversion and OCR tools for Nextcloud</summary>
 	<description>

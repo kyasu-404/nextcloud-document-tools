@@ -1,7 +1,7 @@
 (function () {
 	'use strict'
 
-	const APP_ID = 'document_tools'
+	const APP_ID = 'nextcloud-document-tools'
 	const formats = [
 		['searchable_pdf', 'PDF с OCR', 'Searchable PDF'],
 		['docx', 'DOCX', 'Word-документ'],

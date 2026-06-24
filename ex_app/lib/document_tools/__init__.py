@@ -1,4 +1,4 @@
 """Nextcloud Document Tools ExApp backend."""
 
-APP_ID = "document_tools"
+APP_ID = "nextcloud-document-tools"
 APP_NAME = "Nextcloud Document Tools"

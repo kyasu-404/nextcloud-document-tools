@@ -1,4 +1,4 @@
-APP_ID := document_tools
+APP_ID := nextcloud-document-tools
 IMAGE ?= ghcr.io/kyasu-404/nextcloud-document-tools
 TAG ?= 1.0.0
 
