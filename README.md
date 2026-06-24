@@ -57,6 +57,18 @@ daemon used by HaRP can pull it. A failed pull is surfaced by AppAPI as an
 
 The image intentionally contains LibreOffice, PaddleOCR, PyMuPDF, Pandoc, Calibre, and WeasyPrint dependencies. It will be large.
 
+If AppAPI reports `container startup failed`, check the ExApp container status:
+
+```bash
+docker ps --filter name=nc_app_document_tools
+docker logs nc_app_document_tools
+```
+
+When HaRP is used, `nc_py_api` runs Uvicorn on `/tmp/exapp.sock`. The Docker
+healthcheck therefore checks that Unix socket first. A stale image with a
+TCP-only healthcheck can stay in `health: starting` even though the app logs say
+`Application startup complete`.
+
 ## Register on Nextcloud
 
 Copy `appinfo/info.xml` into the Nextcloud custom app directory and register the
