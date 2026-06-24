@@ -164,6 +164,31 @@
 	word-break: break-word;
 }
 
+#document-tools-root .dt-file-card {
+	margin-top: 20px;
+}
+
+#document-tools-root .dt-file-summary {
+	display: grid;
+	grid-template-columns: repeat(2, minmax(0, 1fr));
+	gap: 8px 16px;
+	border: 1px solid var(--dt-line);
+	border-radius: 8px;
+	background: #fbfdff;
+	padding: 14px;
+}
+
+#document-tools-root .dt-file-summary strong {
+	grid-column: 1 / -1;
+	color: var(--dt-ink);
+	font-size: 16px;
+	overflow-wrap: anywhere;
+}
+
+#document-tools-root .dt-file-summary span {
+	color: var(--dt-muted);
+}
+
 #document-tools-root .dt-section-title {
 	margin: 24px 0 12px;
 	color: var(--dt-ink);
@@ -293,6 +318,12 @@
 	display: block;
 	height: 100%;
 	background: var(--dt-blue);
+}
+
+#document-tools-root .dt-job-stage {
+	margin: 8px 0 0;
+	color: var(--dt-muted);
+	font-size: 13px;
 }
 
 #document-tools-root .dt-result {
@@ -502,6 +533,10 @@
 	}
 
 	#document-tools-root .dt-format-grid {
+		grid-template-columns: 1fr;
+	}
+
+	#document-tools-root .dt-file-summary {
 		grid-template-columns: 1fr;
 	}
 

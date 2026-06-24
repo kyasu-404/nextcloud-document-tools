@@ -16,12 +16,12 @@ from nc_py_api import NextcloudApp
 from nc_py_api.ex_app import AppAPIAuthMiddleware, LogLvl, nc_app, run_app, set_handlers
 
 from document_tools import APP_ID, APP_NAME
-from document_tools.converter import ConversionError, convert_document
+from document_tools.converter import ConversionError, analyze_file, convert_document, diagnostics
 from document_tools.models import FileActionPayload, Job, JobStatus, NextcloudJobRequest, OutputFormat, SaveRequest
 from document_tools.storage import job_dir, safe_upload_name, unique_path
 
 STATIC_ROOT = Path(__file__).parent / "document_tools" / "static"
-OCR_LANG = os.getenv("DOCUMENT_TOOLS_OCR_LANG", "ru")
+OCR_LANG = os.getenv("DOCUMENT_TOOLS_OCR_LANG", "rus+eng")
 MAX_WORKERS = int(os.getenv("DOCUMENT_TOOLS_MAX_WORKERS", "1"))
 SUPPORTED_ACTION_MIME = ",".join(
     [
@@ -89,6 +89,23 @@ async def health() -> dict[str, str]:
     return {"status": "ok", "app": APP_ID}
 
 
+@APP.get("/api/diagnostics")
+async def get_diagnostics() -> dict[str, object]:
+    return diagnostics()
+
+
+@APP.post("/api/notifications/test")
+async def test_notification(nc: Annotated[NextcloudApp, Depends(nc_app)]) -> dict[str, str]:
+    try:
+        object_id = nc.notifications.create(
+            "Nextcloud Document Tools: тест",
+            "Уведомления ExApp настроены корректно.",
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Не удалось создать уведомление: {exc}") from exc
+    return {"status": "ok", "object_id": object_id}
+
+
 @APP.get("/api/formats")
 async def formats() -> dict[str, list[dict[str, str]]]:
     return {
@@ -108,6 +125,7 @@ async def formats() -> dict[str, list[dict[str, str]]]:
 async def create_job(
     output_format: Annotated[OutputFormat, Form()],
     file: Annotated[UploadFile, File()],
+    nc: Annotated[NextcloudApp, Depends(nc_app)],
 ) -> Job:
     job = _create_job(file.filename or "document", output_format, "upload")
     directory = job_dir(job.id)
@@ -116,8 +134,9 @@ async def create_job(
         while chunk := await file.read(1024 * 1024):
             target.write(chunk)
     job.input_path = str(input_path)
+    job.metadata["analysis"] = analyze_file(input_path)
     _store_job(job)
-    executor.submit(_process_job, job.id)
+    executor.submit(_process_job, job.id, nc)
     return job
 
 
@@ -126,6 +145,7 @@ async def create_upload_job(
     request: Request,
     output_format: Annotated[OutputFormat, Query()],
     filename: Annotated[str, Query(min_length=1)],
+    nc: Annotated[NextcloudApp, Depends(nc_app)],
 ) -> Job:
     job = _create_job(filename, output_format, "upload")
     directory = job_dir(job.id)
@@ -140,8 +160,9 @@ async def create_upload_job(
         raise HTTPException(status_code=400, detail="Uploaded file is empty")
     job.input_path = str(input_path)
     job.metadata["size"] = total_size
+    job.metadata["analysis"] = analyze_file(input_path)
     _store_job(job)
-    executor.submit(_process_job, job.id)
+    executor.submit(_process_job, job.id, nc)
     return job
 
 
@@ -163,8 +184,9 @@ async def create_nextcloud_job(
         nc.files.download2stream(node, target)
     job.input_path = str(input_path)
     job.metadata["nextcloud_file"] = _node_to_dict(node)
+    job.metadata["analysis"] = analyze_file(input_path)
     _store_job(job)
-    executor.submit(_process_job, job.id)
+    executor.submit(_process_job, job.id, nc)
     return job
 
 
@@ -285,11 +307,18 @@ def _get_job(job_id: str) -> Job:
     return job
 
 
-def _process_job(job_id: str) -> None:
+def _process_job(job_id: str, nc: NextcloudApp | None = None) -> None:
     job = _get_job(job_id)
     try:
         job.status = JobStatus.RUNNING
+        job.stage = "preflight"
         job.progress = 10
+        job.log.append("Проверка файла и зависимостей")
+        _store_job(job)
+
+        job.stage = "processing"
+        job.progress = 35
+        job.log.append("Запуск конвертации")
         _store_job(job)
 
         output_dir = job_dir(job.id) / "output"
@@ -298,19 +327,45 @@ def _process_job(job_id: str) -> None:
         job.output_path = str(result)
         job.output_filename = result.name
         job.status = JobStatus.DONE
+        job.stage = "done"
         job.progress = 100
+        job.log.append(f"Готово: {result.name}")
         _store_job(job)
+        _notify_job(nc, job, success=True)
     except ConversionError as exc:
-        _fail_job(job, str(exc))
+        _fail_job(job, str(exc), nc)
     except Exception as exc:  # pragma: no cover - safety net for background jobs
-        _fail_job(job, f"Unexpected conversion error: {exc}")
+        _fail_job(job, f"Непредвиденная ошибка конвертации: {exc}", nc)
 
 
-def _fail_job(job: Job, message: str) -> None:
+def _fail_job(job: Job, message: str, nc: NextcloudApp | None = None) -> None:
     job.status = JobStatus.FAILED
+    job.stage = "failed"
     job.progress = 100
-    job.error = message
+    job.error = _safe_user_text(message)
+    job.log.append(job.error)
     _store_job(job)
+    _notify_job(nc, job, success=False)
+
+
+def _notify_job(nc: NextcloudApp | None, job: Job, *, success: bool) -> None:
+    if nc is None:
+        return
+    subject = "Nextcloud Document Tools: задача завершена" if success else "Nextcloud Document Tools: ошибка"
+    message = f"Файл: {job.filename}. Результат: {job.output_filename or job.error or job.stage}."
+    try:
+        nc.notifications.create(_safe_notification_text(subject), _safe_notification_text(message))
+    except Exception as exc:
+        job.log.append(f"Не удалось создать уведомление Nextcloud: {exc}")
+        _store_job(job)
+
+
+def _safe_notification_text(value: str) -> str:
+    return _safe_user_text(value).replace("%", "%%")
+
+
+def _safe_user_text(value: str) -> str:
+    return " ".join(str(value).split())[:1200]
 
 
 if __name__ == "__main__":

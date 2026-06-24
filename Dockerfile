@@ -2,7 +2,7 @@ FROM python:3.11-slim-bookworm
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
-    DOCUMENT_TOOLS_OCR_LANG=ru \
+    DOCUMENT_TOOLS_OCR_LANG=rus+eng \
     DOCUMENT_TOOLS_MAX_WORKERS=1 \
     APP_HOST=0.0.0.0 \
     APP_PORT=23000
@@ -22,7 +22,13 @@ RUN apt-get update \
         pandoc \
         calibre \
         poppler-utils \
+        ocrmypdf \
+        qpdf \
+        ghostscript \
+        file \
         tesseract-ocr \
+        tesseract-ocr-eng \
+        tesseract-ocr-rus \
         gosu \
     && rm -rf /var/lib/apt/lists/*
 

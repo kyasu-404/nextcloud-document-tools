@@ -6,12 +6,12 @@ Python ExApp for Nextcloud AppAPI that provides document conversion and OCR tool
 
 - PDF -> DOCX with `pdf2docx`
 - DOCX -> PDF with LibreOffice headless
-- PDF -> searchable PDF with PaddleOCR and PyMuPDF
+- PDF -> searchable PDF with OCRmyPDF and Tesseract, with PaddleOCR/PyMuPDF fallback
 - PDF -> TXT with PyMuPDF, with OCR fallback for scanned PDFs
 - DOCX -> Markdown with Mammoth, with Pandoc fallback
 - HTML -> PDF with WeasyPrint, with LibreOffice fallback
 - EPUB -> PDF with Calibre `ebook-convert`, with Pandoc fallback
-- Image OCR to TXT or searchable PDF with PaddleOCR
+- Image OCR to TXT or searchable PDF with Tesseract, with PaddleOCR fallback
 - Top menu page in Nextcloud
 - Files context menu action: `Конвертировать документ`
 - In-memory processing queue with downloadable results
@@ -63,7 +63,7 @@ If the GHCR package is private, either make it public or make sure the Docker
 daemon used by HaRP can pull it. A failed pull is surfaced by AppAPI as an
 `images/create` error from the HaRP Docker proxy.
 
-The image intentionally contains LibreOffice, PaddleOCR, PyMuPDF, Pandoc, Calibre, and WeasyPrint dependencies. It will be large.
+The image intentionally contains LibreOffice, OCRmyPDF, Tesseract, PaddleOCR, PyMuPDF, Pandoc, Calibre, and WeasyPrint dependencies. It will be large.
 
 If AppAPI reports `container startup failed`, check the ExApp container status:
 
@@ -76,6 +76,20 @@ When HaRP is used, `nc_py_api` runs Uvicorn on `/tmp/exapp.sock`. The Docker
 healthcheck therefore checks that Unix socket first. A stale image with a
 TCP-only healthcheck can stay in `health: starting` even though the app logs say
 `Application startup complete`.
+
+Runtime diagnostics are available from the ExApp proxy:
+
+```text
+/api/diagnostics
+```
+
+It reports Python imports, required system commands, installed Tesseract
+languages, and writable storage status.
+
+Do not put literal `%` into AppAPI notification rich subject/message strings
+unless it is escaped as `%%` or supplied through rich object params. Nextcloud's
+notification renderer localizes those strings and unescaped percent markers can
+break the Notifications endpoint for the user.
 
 ## Register on Nextcloud
 

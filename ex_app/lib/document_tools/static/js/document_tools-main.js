@@ -15,6 +15,7 @@
 	let selectedSource = null
 	let latestDoneJob = null
 	let jobsPollTimer = null
+	let diagnosticsState = null
 
 	function apiBase() {
 		if (window.OC && typeof window.OC.generateUrl === 'function') {
@@ -52,13 +53,16 @@
 							<div class="dt-file-name" data-file-name>Файл не выбран</div>
 						</div>
 					</section>
-					<h2 class="dt-section-title">Формат результата</h2>
-					<div class="dt-format-grid">
-						${formats.map(([id, label, hint]) => formatTile(id, label, hint)).join('')}
-					</div>
-					<div class="dt-output-actions" style="margin-top: 18px">
-						<button class="dt-button success" data-action="start">Запустить обработку</button>
-					</div>
+					<section class="dt-file-card" data-file-card hidden></section>
+					<section data-action-panel hidden>
+						<h2 class="dt-section-title">Доступные действия</h2>
+						<div class="dt-format-grid">
+							${formats.map(([id, label, hint]) => formatTile(id, label, hint)).join('')}
+						</div>
+						<div class="dt-output-actions" style="margin-top: 18px">
+							<button class="dt-button success" data-action="start">Запустить обработку</button>
+						</div>
+					</section>
 					<input type="file" data-file-input hidden>
 				</main>
 				<aside class="dt-panel">
@@ -86,6 +90,7 @@
 		mount.innerHTML = ''
 		mount.appendChild(root)
 		bind(root)
+		loadDiagnostics(root)
 		loadJobs(root)
 		loadInitialContextFile(root)
 		if (jobsPollTimer) {
@@ -181,18 +186,77 @@
 		const label = root.querySelector('[data-file-name]')
 		if (!selectedSource) {
 			label.textContent = 'Файл не выбран'
+			updateFileCard(root)
+			updateAvailableFormats(root)
 			return
 		}
 		if (selectedSource.type === 'local') {
 			label.textContent = `${selectedSource.file.name} · с компьютера`
+			updateFileCard(root)
+			updateAvailableFormats(root)
 			return
 		}
 		label.textContent = `${selectedSource.file.name} · Nextcloud`
+		updateFileCard(root)
+		updateAvailableFormats(root)
+	}
+
+	function updateFileCard(root) {
+		const card = root.querySelector('[data-file-card]')
+		if (!selectedSource) {
+			card.hidden = true
+			card.innerHTML = ''
+			return
+		}
+		const file = selectedSource.file
+		const info = fileInfo(file)
+		card.hidden = false
+		card.innerHTML = `
+			<h2 class="dt-section-title">Файл</h2>
+			<div class="dt-file-summary">
+				<strong>${escapeHtml(info.name)}</strong>
+				<span>Тип: ${escapeHtml(info.typeLabel)}</span>
+				<span>Размер: ${escapeHtml(formatBytes(info.size))}</span>
+				<span>OCR нужен: ${info.needsOcr ? 'да' : 'по ситуации'}</span>
+				<span>Источник: ${selectedSource.type === 'local' ? 'компьютер' : 'Nextcloud'}</span>
+			</div>
+		`
+	}
+
+	function updateAvailableFormats(root) {
+		const panel = root.querySelector('[data-action-panel]')
+		if (!selectedSource) {
+			panel.hidden = true
+			return
+		}
+		panel.hidden = false
+		const allowed = allowedFormatsForSource(selectedSource)
+		const empty = panel.querySelector('[data-no-actions]')
+		if (!allowed.length) {
+			if (!empty) {
+				panel.insertAdjacentHTML('beforeend', '<p class="dt-empty" data-no-actions>Для этого файла нет доступных операций: в контейнере отсутствуют нужные инструменты.</p>')
+			}
+		} else if (empty) {
+			empty.remove()
+		}
+		if (allowed.length && !allowed.includes(selectedFormat)) {
+			selectedFormat = allowed[0]
+		}
+		root.querySelectorAll('[data-format]').forEach((tile) => {
+			const enabled = allowed.includes(tile.dataset.format)
+			tile.hidden = !enabled
+			tile.disabled = !enabled
+			tile.setAttribute('aria-pressed', enabled && tile.dataset.format === selectedFormat ? 'true' : 'false')
+		})
 	}
 
 	async function createJob(root) {
 		if (!selectedSource) {
 			notify(root, 'Сначала выберите файл.', 'error')
+			return
+		}
+		if (!allowedFormatsForSource(selectedSource).includes(selectedFormat)) {
+			notify(root, 'Для выбранного файла нет доступного действия.', 'error')
 			return
 		}
 
@@ -228,6 +292,23 @@
 			headers: { 'Content-Type': 'application/octet-stream' },
 			body: file,
 		})
+	}
+
+	async function loadDiagnostics(root) {
+		try {
+			const response = await fetch(apiUrl('/api/diagnostics'))
+			if (!response.ok) {
+				return
+			}
+			diagnosticsState = await response.json()
+			const langs = diagnosticsState.tesseract_languages || []
+			if (langs.length && !langs.includes('rus')) {
+				notify(root, 'Русский язык OCR не найден в контейнере. Пересоберите образ с tesseract-ocr-rus.', 'error')
+			}
+			updateAvailableFormats(root)
+		} catch (_error) {
+			// Diagnostics are helpful, but the UI can work without them.
+		}
 	}
 
 	function uploadNextcloudFile(file) {
@@ -275,6 +356,7 @@
 					<span class="dt-job-status">${escapeHtml(status)}</span>
 				</div>
 				<div class="dt-progress"><span style="width: ${progress}%"></span></div>
+				${job.stage ? `<p class="dt-job-stage">${escapeHtml(stageText(job.stage))}</p>` : ''}
 				${job.error ? `<p class="dt-empty">${escapeHtml(job.error)}</p>` : ''}
 			</article>
 		`
@@ -291,6 +373,17 @@
 			return 'готово'
 		}
 		return 'ошибка'
+	}
+
+	function stageText(stage) {
+		const stages = {
+			queued: 'ожидает',
+			preflight: 'проверка',
+			processing: 'обработка',
+			done: 'готово',
+			failed: 'ошибка',
+		}
+		return stages[stage] || stage
 	}
 
 	async function saveResult(root, mode) {
@@ -433,6 +526,81 @@
 		}
 		selectedSource = { type: 'nextcloud', file }
 		updateSelectedFile(root)
+	}
+
+	function fileInfo(file) {
+		const name = file.name || 'document'
+		const ext = extension(name)
+		const mime = file.type || file.mimetype || ''
+		const isImage = mime.startsWith('image/') || ['png', 'jpg', 'jpeg', 'tif', 'tiff', 'bmp', 'webp'].includes(ext)
+		const isPdf = mime === 'application/pdf' || ext === 'pdf'
+		const isDoc = ['doc', 'docx', 'odt', 'rtf'].includes(ext)
+		const isText = ['txt', 'md', 'markdown', 'html', 'htm'].includes(ext)
+		const typeLabel = isPdf ? 'PDF' : isImage ? 'изображение' : isDoc ? 'документ' : isText ? 'текст/разметка' : ext.toUpperCase() || 'файл'
+		return {
+			name,
+			ext,
+			mime,
+			size: file.size || 0,
+			isImage,
+			isPdf,
+			isDoc,
+			isText,
+			typeLabel,
+			needsOcr: isImage,
+		}
+	}
+
+	function allowedFormatsForSource(source) {
+		const info = fileInfo(source.file)
+		let allowed
+		if (info.isImage) {
+			allowed = ['searchable_pdf', 'txt', 'pdf']
+		} else if (info.isPdf) {
+			allowed = ['searchable_pdf', 'docx', 'txt', 'markdown', 'html']
+		} else if (info.isDoc) {
+			allowed = ['pdf', 'markdown', 'txt', 'html']
+		} else if (['md', 'markdown'].includes(info.ext)) {
+			allowed = ['html', 'docx', 'pdf', 'epub', 'txt']
+		} else if (['html', 'htm'].includes(info.ext)) {
+			allowed = ['pdf', 'markdown', 'docx', 'txt']
+		} else if (info.ext === 'txt') {
+			allowed = ['pdf', 'docx', 'html', 'markdown']
+		} else if (info.ext === 'epub') {
+			allowed = ['pdf', 'html', 'txt']
+		} else {
+			allowed = ['txt']
+		}
+		return allowed.filter((format) => toolAvailable(format, info))
+	}
+
+	function toolAvailable(format, info) {
+		if (!diagnosticsState) {
+			return true
+		}
+		const commands = diagnosticsState.commands || {}
+		const imports = diagnosticsState.imports || {}
+		if (format === 'searchable_pdf' && info.isPdf) {
+			return Boolean(commands.ocrmypdf || imports.paddleocr?.ok)
+		}
+		if (format === 'searchable_pdf' && info.isImage) {
+			return Boolean(commands.tesseract || imports.paddleocr?.ok)
+		}
+		if (format === 'docx' && info.isPdf) {
+			return Boolean(imports.pdf2docx?.ok)
+		}
+		if (['markdown', 'html', 'epub'].includes(format)) {
+			return Boolean(commands.pandoc || imports.mammoth?.ok)
+		}
+		if (format === 'pdf' && info.isDoc) {
+			return Boolean(commands.libreoffice || commands.soffice)
+		}
+		return true
+	}
+
+	function extension(name) {
+		const last = String(name || '').split('.').pop()
+		return last && last !== name ? last.toLowerCase() : ''
 	}
 
 	function parentPath(path) {

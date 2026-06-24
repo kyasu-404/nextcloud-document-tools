@@ -42,6 +42,7 @@ class Job(BaseModel):
     output_format: OutputFormat
     operation: str
     status: JobStatus = JobStatus.QUEUED
+    stage: str = "queued"
     progress: int = 0
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
@@ -49,6 +50,7 @@ class Job(BaseModel):
     output_path: str | None = None
     output_filename: str | None = None
     error: str | None = None
+    log: list[str] = Field(default_factory=list)
     metadata: dict[str, Any] = Field(default_factory=dict)
 
     def touch(self) -> None:
